@@ -177,6 +177,58 @@ class GFSourcesTestCase(unittest.TestCase):
                 cent = dsource.centroid()
                 assert numeq(cent.time + source.get_timeshift(), t, 0.0001)
 
+    def test_gaussian_kernel(self):
+        width = 3. * km
+        gf.seismosizer.get_gaussian_kernel_2d(
+            length=10. * km, width=width, dl=0.5 * km, dw=0.3 * km,
+            center_w=width / 3.)
+
+        def plot_kernel(kernel):
+            print('Here')
+            import matplotlib.pyplot as plt
+            fig = plt.figure()
+            ax = fig.gca()
+            im = ax.matshow(kernel)
+            plt.colorbar(im)
+            plt.show()
+            print('Plotted')
+
+        # plot_kernel(a)
+        # print(a, a.mean())
+
+    def test_rect_source_discretization(self):
+        store = self.dummy_store()
+        s = gf.RectangularSource(
+            length=10. * km, width=5 * km, strike=90., dip=0.,
+            magnitude=6., gaussian_dist=True)
+
+        def plot_rectangular_source(src, store):
+            from matplotlib import pyplot as plt
+            from matplotlib.patches import Polygon
+            scattersize = 16
+            ax = plt.gca()
+            ne = src.outline(cs='xy')
+            p = Polygon(num.fliplr(ne), fill=False, color='r', alpha=.7)
+            ax.add_artist(p)
+
+            mt = src.discretize_basesource(store)
+            moments = mt.moments()
+            nmoments = moments / moments.max()
+
+            gk = gf.seismosizer.get_gaussian_kernel_2d(
+                length=src.length, width=src.width, dl=769.2307692307693, dw=714.2857142857143,
+                center_w=src.width / 3.)
+            ngk = gk / gk.max()
+            print(nmoments.size, ngk.flatten().size)
+            print(nmoments / ngk.flatten())
+            im = ax.scatter(mt.east_shifts, mt.north_shifts, s=scattersize, c=nmoments)
+            #ax.scatter(src.east_shift, src.north_shift, color='r')
+            plt.colorbar(im)
+            plt.show()
+
+        plot_rectangular_source(s, store)
+
+
     def test_outline(self):
         s = gf.MTSource(
             east_shift=5. * km,

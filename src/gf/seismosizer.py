@@ -19,7 +19,7 @@ import numpy as num
 
 from pyrocko.guts import (Object, Float, String, StringChoice, List,
                           Timestamp, Int, SObject, ArgumentError, Dict,
-                          ValidationError)
+                          ValidationError, Bool)
 from pyrocko.guts_array import Array
 
 from pyrocko import moment_tensor as mt
@@ -151,10 +151,47 @@ def arr(x):
     return num.atleast_1d(num.asarray(x))
 
 
+class FaultDiscretizationError(Exception):
+    pass
+
+
+def get_gaussian_kernel(
+        size=2000., sigma=3, step_size=100., center=None):
+    """
+    Make a gaussian kernel.
+    """
+
+    gridpoints = num.arange(0, size, step_size, float)
+
+    if center is None:
+        gp0 = size / 2.
+    elif center > size or center < 0.:
+        raise FaultDiscretizationError
+    else:
+        gp0 = center
+
+    return (1 / (2 * num.pi * sigma ** 2)) * num.exp(
+        - ((gridpoints - gp0) ** 2) / (2 * sigma ** 2))
+
+
+def get_gaussian_kernel_2d(
+        width, length, dw, dl, center_w=None, center_l=None):
+    """
+    Get 2d Gaussian of fault length and widht with 2sigma std flattening
+    towards the edges of the fault.
+    """
+    ws = get_gaussian_kernel(
+        size=width, step_size=dw, center=center_w, sigma=width / 4.)
+    ls = get_gaussian_kernel(
+        size=length, step_size=dl, center=center_l, sigma=length / 4.)
+    grid_points = ls * ws[:, num.newaxis]
+    return grid_points / grid_points.mean()
+
+
 def discretize_rect_source(deltas, deltat, strike, dip, length, width,
                            anchor, velocity, stf=None,
                            nucleation_x=None, nucleation_y=None,
-                           tref=0.0, decimation_factor=1):
+                           tref=0.0, decimation_factor=1, gaussian_dist=False):
 
     if stf is None:
         stf = STF()
@@ -172,7 +209,7 @@ def discretize_rect_source(deltas, deltat, strike, dip, length, width,
 
     dl = ln / nl
     dw = wd / nw
-
+    print(dl,dw)
     xl = num.linspace(-0.5*(ln-dl), 0.5*(ln-dl), nl)
     xw = num.linspace(-0.5*(wd-dw), 0.5*(wd-dw), nw)
 
@@ -224,10 +261,18 @@ def discretize_rect_source(deltas, deltat, strike, dip, length, width,
     xtau, amplitudes = stf.discretize_t(deltat, tref)
     nt = xtau.size
 
+    if gaussian_dist:
+        gauss_kernel = get_gaussian_kernel_2d(
+            length=length, width=width, dl=dl, dw=dw,
+            center_w=width / 3.,
+            center_l=length / 2.)
+        gauss_kernel2 = num.repeat(gauss_kernel.flatten(), nt, axis=0)
+        amplitudes2 = num.tile(amplitudes, n) * gauss_kernel2
+    else:
+        amplitudes2 = num.tile(amplitudes, n)
+
     points2 = num.repeat(points, nt, axis=0)
     times2 = num.repeat(times, nt) + num.tile(xtau, n)
-    amplitudes2 = num.tile(amplitudes, n)
-
     return points2, times2, amplitudes2, dl, dw
 
 
@@ -1671,6 +1716,13 @@ class RectangularSource(DCSource):
         optional=True,
         default=1)
 
+    gaussian_dist = Bool.T(
+        optional=True,
+        default=False,
+        help='If true, the slip input is distributed via a gaussian kernel '
+             'across the fault. The "slip" attribute will be then referring '
+             'to the mean of the slip on the fault.')
+
     def base_key(self):
         return DCSource.base_key(self) + (
             self.length,
@@ -1698,7 +1750,8 @@ class RectangularSource(DCSource):
             store.config.deltas, store.config.deltat,
             self.strike, self.dip, self.length, self.width, self.anchor,
             self.velocity, stf=stf, nucleation_x=nucx, nucleation_y=nucy,
-            decimation_factor=self.decimation_factor)
+            decimation_factor=self.decimation_factor,
+            gaussian_dist=self.gaussian_dist)
 
         if self.slip is not None:
             points2 = points.copy()
